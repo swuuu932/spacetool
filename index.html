@@ -1,14 +1,436 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="ko">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hello World</title>
-  <link href='/style.css' rel='stylesheet'>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 단면 시뮬레이터</title>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --bg: #0f172a;
+            --panel: rgba(30, 41, 59, 0.8);
+            --text: #f8fafc;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+        }
+
+        canvas {
+            display: block;
+        }
+
+        #ui-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 300px;
+            padding: 24px;
+            background: var(--panel);
+            backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            z-index: 100;
+        }
+
+        h1 {
+            margin: 0 0 20px 0;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: -0.025em;
+        }
+
+        .control-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            opacity: 0.9;
+        }
+
+        .btn-group {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+
+        button {
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        button.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            font-weight: 600;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
+            appearance: none;
+            outline: none;
+            margin: 10px 0;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: var(--primary);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+
+        .value-display {
+            float: right;
+            font-family: monospace;
+            color: var(--primary);
+        }
+
+        .help {
+            font-size: 0.75rem;
+            opacity: 0.6;
+            margin-top: 10px;
+            line-height: 1.4;
+        }
+    </style>
 </head>
 <body>
-  <h1>Hello, world!</h1>
-  <button onclick="console.log('hello');">Press me</button>
-  <script defer type="text/javascript" src="/main.js"></script>
+
+<div id="ui-panel">
+    <h1>3D Cross-section</h1>
+    
+    <label>도형 선택</label>
+    <div class="btn-group">
+        <button onclick="setShape('cube')" id="btn-cube" class="active">정육면체</button>
+        <button onclick="setShape('sphere')" id="btn-sphere">구</button>
+        <button onclick="setShape('cylinder')" id="btn-cylinder">원기둥</button>
+        <button onclick="setShape('cone')" id="btn-cone">원뿔</button>
+    </div>
+
+    <div class="control-group">
+        <label>평면 위치 (D) <span id="val-dist" class="value-display">0.0</span></label>
+        <input type="range" id="plane-dist" min="-2" max="2" step="0.01" value="0">
+    </div>
+
+    <div class="control-group">
+        <label>평면 회전 X <span id="val-rotX" class="value-display">0°</span></label>
+        <input type="range" id="plane-rotX" min="0" max="360" step="1" value="0">
+    </div>
+
+    <div class="control-group">
+        <label>평면 회전 Z <span id="val-rotZ" class="value-display">0°</span></label>
+        <input type="range" id="plane-rotZ" min="0" max="360" step="1" value="0">
+    </div>
+
+    <div class="help">
+        • 마우스 드래그: 회전<br>
+        • 마우스 휠: 확대/축소<br>
+        • 오른쪽 드래그: 이동
+    </div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- 초기화 ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f172a);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(3, 3, 5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // --- 조명 ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const pointLight = new THREE.PointLight(0xffffff, 15);
+    pointLight.position.set(5, 5, 5);
+    scene.add(pointLight);
+
+    const pointLight2 = new THREE.PointLight(0x3b82f6, 10);
+    pointLight2.position.set(-5, -5, -5);
+    scene.add(pointLight2);
+
+    // --- 그리드 및 도우미 ---
+    const gridHelper = new THREE.GridHelper(10, 10, 0x334155, 0x1e293b);
+    scene.add(gridHelper);
+
+    // --- 상태 변수 ---
+    let currentMesh = null;
+    let crossSectionMesh = null;
+    let planeVisual = null;
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+    // UI 요소
+    const distInput = document.getElementById('plane-dist');
+    const rotXInput = document.getElementById('plane-rotX');
+    const rotZInput = document.getElementById('plane-rotZ');
+    
+    const valDist = document.getElementById('val-dist');
+    const valRotX = document.getElementById('val-rotX');
+    const valRotZ = document.getElementById('val-rotZ');
+
+    // --- 평면 비주얼 생성 ---
+    function createPlaneVisual() {
+        const geometry = new THREE.PlaneGeometry(5, 5);
+        const material = new THREE.MeshPhongMaterial({
+            color: 0x3b82f6,
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false
+        });
+        planeVisual = new THREE.Mesh(geometry, material);
+        scene.add(planeVisual);
+
+        // 평면 외곽선
+        const edges = new THREE.EdgesGeometry(geometry);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.5 }));
+        planeVisual.add(line);
+    }
+
+    // --- 도형 생성 ---
+    function setShape(type) {
+        if (currentMesh) scene.remove(currentMesh);
+        
+        // 버튼 활성화 스타일 업데이트
+        ['cube', 'sphere', 'cylinder', 'cone'].forEach(t => {
+            document.getElementById(`btn-${t}`).classList.toggle('active', t === type);
+        });
+
+        let geometry;
+        switch(type) {
+            case 'cube': geometry = new THREE.BoxGeometry(2, 2, 2); break;
+            case 'sphere': geometry = new THREE.SphereGeometry(1.2, 32, 32); break;
+            case 'cylinder': geometry = new THREE.CylinderGeometry(1, 1, 2, 32); break;
+            case 'cone': geometry = new THREE.ConeGeometry(1, 2, 32); break;
+        }
+
+        const material = new THREE.MeshPhongMaterial({
+            color: 0x64748b,
+            transparent: true,
+            opacity: 0.3,
+            side: THREE.DoubleSide
+        });
+        
+        currentMesh = new THREE.Mesh(geometry, material);
+        scene.add(currentMesh);
+
+        // 와이어프레임 추가
+        const wireframe = new THREE.LineSegments(
+            new THREE.EdgesGeometry(geometry),
+            new THREE.LineBasicMaterial({ color: 0x94a3b8, transparent: true, opacity: 0.2 })
+        );
+        currentMesh.add(wireframe);
+
+        updateCrossSection();
+    }
+
+    // --- 단면 계산 로직 ---
+    function updateCrossSection() {
+        if (!currentMesh) return;
+
+        // 기존 단면 제거
+        if (crossSectionMesh) scene.remove(crossSectionMesh);
+
+        const geometry = currentMesh.geometry;
+        const positions = geometry.attributes.position;
+        const points = [];
+        const vA = new THREE.Vector3();
+        const vB = new THREE.Vector3();
+        const vC = new THREE.Vector3();
+        const intersectionPoint = new THREE.Vector3();
+
+        // 모든 삼각형의 변에 대해 평면과의 교점 계산
+        // BufferGeometry의 인덱스가 있는 경우와 없는 경우 모두 대응
+        const index = geometry.index;
+        const count = index ? index.count : positions.count;
+
+        for (let i = 0; i < count; i += 3) {
+            const idx1 = index ? index.getX(i) : i;
+            const idx2 = index ? index.getX(i + 1) : i + 1;
+            const idx3 = index ? index.getX(i + 2) : i + 2;
+
+            vA.fromBufferAttribute(positions, idx1);
+            vB.fromBufferAttribute(positions, idx2);
+            vC.fromBufferAttribute(positions, idx3);
+
+            // 각 변(AB, BC, CA)에 대해 체크
+            checkEdge(vA, vB, plane, points);
+            checkEdge(vB, vC, plane, points);
+            checkEdge(vC, vA, plane, points);
+        }
+
+        if (points.length < 3) return;
+
+        // 중복 포인트 제거 (부동 소수점 오차 고려)
+        const uniquePoints = [];
+        points.forEach(p => {
+            if (!uniquePoints.some(up => up.distanceTo(p) < 0.001)) {
+                uniquePoints.push(p);
+            }
+        });
+
+        if (uniquePoints.length < 3) return;
+
+        // 포인트 정렬 (컨벡스 폴리곤 가공)
+        // 1. 중심점 계산
+        const center = new THREE.Vector3();
+        uniquePoints.forEach(p => center.add(p));
+        center.divideScalar(uniquePoints.length);
+
+        // 2. 평면상의 로컬 좌표계 생성 (정렬용)
+        const normal = plane.normal.clone();
+        let tangent = new THREE.Vector3(1, 0, 0);
+        if (Math.abs(normal.dot(tangent)) > 0.9) {
+            tangent.set(0, 1, 0);
+        }
+        const bitangent = new THREE.Vector3().crossVectors(normal, tangent).normalize();
+        tangent.crossVectors(bitangent, normal).normalize();
+
+        // 3. 각도순으로 정렬
+        uniquePoints.sort((a, b) => {
+            const da = a.clone().sub(center);
+            const db = b.clone().sub(center);
+            const angleA = Math.atan2(da.dot(bitangent), da.dot(tangent));
+            const angleB = Math.atan2(db.dot(bitangent), db.dot(tangent));
+            return angleA - angleB;
+        });
+
+        // 결과 메쉬 생성
+        const shape = new THREE.Shape(uniquePoints.map(p => {
+            return new THREE.Vector2(p.clone().sub(center).dot(tangent), p.clone().sub(center).dot(bitangent));
+        }));
+        
+        const sectionGeom = new THREE.ShapeGeometry(shape);
+        const sectionMat = new THREE.MeshPhongMaterial({
+            color: 0x3b82f6,
+            side: THREE.DoubleSide,
+            emissive: 0x1d4ed8,
+            emissiveIntensity: 0.5
+        });
+        
+        crossSectionMesh = new THREE.Mesh(sectionGeom, sectionMat);
+        
+        // 로컬 좌표계를 월드 좌표계로 변환하여 위치 설정
+        crossSectionMesh.lookAt(normal);
+        crossSectionMesh.position.copy(center);
+        
+        scene.add(crossSectionMesh);
+
+        // 테두리 선 추가
+        const lineGeom = new THREE.BufferGeometry().setFromPoints([...uniquePoints, uniquePoints[0]]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+        const line = new THREE.Line(lineGeom, lineMat);
+        crossSectionMesh.add(line);
+    }
+
+    function checkEdge(v1, v2, plane, points) {
+        const line = new THREE.Line3(v1, v2);
+        const intersection = new THREE.Vector3();
+        if (plane.intersectLine(line, intersection)) {
+            points.push(intersection.clone());
+        }
+    }
+
+    // --- 평면 업데이트 ---
+    function updatePlane() {
+        const d = parseFloat(distInput.value);
+        const rx = THREE.MathUtils.degToRad(parseFloat(rotXInput.value));
+        const rz = THREE.MathUtils.degToRad(parseFloat(rotZInput.value));
+
+        valDist.textContent = d.toFixed(1);
+        valRotX.textContent = rotXInput.value + '°';
+        valRotZ.textContent = rotZInput.value + '°';
+
+        // 법선 벡터 계산
+        const normal = new THREE.Vector3(0, 1, 0);
+        const euler = new THREE.Euler(rx, 0, rz);
+        normal.applyEuler(euler);
+
+        plane.set(normal, -d);
+
+        // 비주얼 업데이트
+        if (planeVisual) {
+            planeVisual.position.copy(normal.clone().multiplyScalar(d));
+            planeVisual.lookAt(planeVisual.position.clone().add(normal));
+        }
+
+        updateCrossSection();
+    }
+
+    // --- 이벤트 리스너 ---
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    [distInput, rotXInput, rotZInput].forEach(input => {
+        input.addEventListener('input', updatePlane);
+    });
+
+    // 글로벌 함수 등록 (버튼용)
+    window.setShape = setShape;
+
+    // --- 실행 ---
+    createPlaneVisual();
+    setShape('cube');
+    updatePlane();
+
+    function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+    }
+    animate();
+
+</script>
+
 </body>
 </html>
